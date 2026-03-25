@@ -78,6 +78,8 @@ export interface PermissionRequestEvent extends AgentRuntimeEventBase {
   kind: 'permission_request';
   requestId: string;
   toolName: string;
+  toolInput?: unknown;
+  toolCallId?: string;
 }
 
 export interface PermissionResolvedEvent extends AgentRuntimeEventBase {
