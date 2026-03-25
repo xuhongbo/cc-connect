@@ -4,6 +4,7 @@ export interface AttachmentRef {
   kind: 'file' | 'image';
   path: string;
   name: string;
+  originalName?: string;
 }
 
 export interface LastTurnSnapshot {

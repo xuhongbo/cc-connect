@@ -9,12 +9,12 @@ export function createCodexAdapter(deps: BinaryCheckDeps): AgentAdapter {
   return {
     kind: 'codex',
     runtimeKind: 'resume-per-turn',
-    async createSession(_input) {
+    async createSession(input) {
       const ok = await deps.hasBinary('codex');
       if (!ok) {
         throw new Error('codex CLI not available');
       }
-      return new CodexSessionRuntime();
+      return new CodexSessionRuntime(input);
     },
     async detectAvailability() {
       return deps.hasBinary('codex');

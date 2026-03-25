@@ -6,7 +6,11 @@ import type { AgentRuntimeProjectContext } from '../agents/types.js';
 import type { AgentsManager } from '../agents/manager.js';
 import type { SessionManager } from '../sessions/session-manager.js';
 import type { RuntimeEventPump } from '../app/runtime-event-pump.js';
-import { stageAttachments } from '../utils/files.js';
+import {
+  stageAttachmentsForRuntime,
+  type InputFile,
+  type InputImage,
+} from '../agents/base/attachment-staging.js';
 
 interface ThreadsRepoLike {
   getByThreadId(threadId: string): Promise<ConversationThread | null>;
@@ -14,17 +18,6 @@ interface ThreadsRepoLike {
 
 interface BindingsRepoLike {
   getByThreadRecordId(threadRecordId: string): Promise<AgentSessionBinding | null>;
-}
-
-interface InputFile {
-  fileName: string;
-  data: Uint8Array;
-}
-
-interface InputImage {
-  fileName: string;
-  data: Uint8Array;
-  mimeType: string;
 }
 
 export interface HandleThreadMessageInput {
@@ -83,20 +76,17 @@ export async function handleThreadMessage(input: HandleThreadMessageInput): Prom
     input.sessions.setRuntime(thread.id, runtime);
 
     const staged = workDir
-      ? await stageAttachments({
+      ? await stageAttachmentsForRuntime({
           workDir,
           files: input.files ?? [],
           images: input.images ?? [],
         })
-      : { files: [], images: [] };
+      : { files: [], images: [], attachmentRefs: [] };
 
     input.sessions.setLastTurnSnapshot(createLastTurnSnapshot({
       threadRecordId: thread.id,
       userMessageText: input.text,
-      attachmentRefs: [
-        ...staged.files.map((file) => ({ kind: 'file' as const, path: file.path, name: file.name })),
-        ...staged.images.map((image) => ({ kind: 'image' as const, path: image.path, name: image.name })),
-      ],
+      attachmentRefs: staged.attachmentRefs,
       agentKind: binding.agentKind,
       model: binding.model,
       mode: binding.mode,

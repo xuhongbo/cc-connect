@@ -7,11 +7,13 @@ export type RuntimeKind = 'persistent' | 'resume-per-turn';
 
 export interface RuntimeFileRef {
   name: string;
+  originalName?: string;
   path: string;
 }
 
 export interface RuntimeImageRef {
   name: string;
+  originalName?: string;
   path: string;
   mimeType: string;
 }
