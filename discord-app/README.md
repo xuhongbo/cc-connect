@@ -85,3 +85,21 @@ npm test
 - 当前共享附件目录为：
   - `.cc-connect/attachments/`
   - `.cc-connect/images/`
+
+
+## 真实 Discord 联调
+
+如果 `.env` 已配置好 Discord 凭据，可直接运行：
+
+```bash
+cd discord-app
+npm run smoke:discord
+```
+
+如果还要验证线程创建权限：
+
+```bash
+DISCORD_TEST_CHANNEL_ID=<文本频道ID> DISCORD_SMOKE_CREATE_THREAD=true npm run smoke:discord
+```
+
+当前已验证 bot 侧可完成：登录、列出频道、创建测试线程、在线程发消息、归档线程。
