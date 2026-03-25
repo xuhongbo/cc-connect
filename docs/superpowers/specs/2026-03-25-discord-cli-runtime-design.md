@@ -153,6 +153,63 @@
 - 只抽稳定字段
 - 其余保留在 `raw` 里
 
+### 3.5 运行时接口定稿
+
+本次实现不再沿用当前宽松的 `createSession(): Promise<AgentSessionRuntime>` + `events(): AsyncIterable<unknown>` 模型，而是直接收紧 `src/agents/types.ts` 与 `src/agents/events.ts`。
+
+需要明确替换为以下能力边界：
+
+#### 适配器接口
+
+```ts
+interface CreateAgentSessionInput {
+  workDir: string;
+  binding: AgentSessionBinding;
+  project: Project;
+  lastTurn?: LastTurnSnapshot | null;
+}
+
+interface AgentAdapter {
+  kind: AgentKind;
+  runtimeKind: RuntimeKind;
+  createSession(input: CreateAgentSessionInput): Promise<AgentSessionRuntime>;
+  detectAvailability(): Promise<boolean>;
+}
+```
+
+#### 运行时接口
+
+```ts
+interface AgentSessionRuntime {
+  send(input: AgentRuntimeInput): Promise<void>;
+  cancel(reason?: string): Promise<void>;
+  close(): Promise<void>;
+  isBusy(): boolean;
+  isAlive(): boolean;
+  getSessionId(): string;
+  getPendingPermission(): PendingPermissionState | null;
+  respondPermission(input: PermissionResponseInput): Promise<void>;
+  events(): AsyncIterable<AgentRuntimeEvent>;
+}
+```
+
+#### 会话对象生命周期
+
+- `Claude`：线程级会话对象长期保留；真实长驻进程断开后，会话对象仍可保留逻辑绑定与 `sessionId`
+- `Codex` / `Gemini`：线程级会话对象也长期保留，但每轮内部只启动一个短命子进程；会话对象负责持有 `thread_id` / `chat_id`
+- `SessionManager` 保存的是“线程 -> 逻辑会话对象”的映射，而不是“线程 -> 当前进程对象”的弱引用
+
+#### 持久化状态回写责任
+
+运行时本身不直接写仓储，但必须通过事件把这些状态变化暴露给上层：
+
+- `sessionId` 更新
+- pending permission 进入 / 离开
+- turn 开始 / 完成 / 失败
+- 进程损坏或异常退出
+
+由 `app/orchestrator.ts` 或专门的状态同步层负责把这些事件写回 `binding` / `runtime state`。
+
 ---
 
 ## 4. 统一事件模型
@@ -201,6 +258,160 @@
 
 这样可以让 `app/streaming.ts` 和 Discord 层只依赖统一事件，而不会直接耦合特定 CLI 输出格式。
 
+### 4.4 判别联合类型约束
+
+后续实现必须把 `src/agents/events.ts` 定成类似下面的结构，而不是继续保留宽松对象：
+
+```ts
+type AgentRuntimeEvent =
+  | SessionInitEvent
+  | TurnStartedEvent
+  | TextDeltaEvent
+  | TextFinalEvent
+  | ThinkingEvent
+  | ToolUseEvent
+  | ToolResultEvent
+  | PermissionRequestEvent
+  | PermissionResolvedEvent
+  | TurnCompletedEvent
+  | TurnFailedEvent
+  | RuntimeErrorEvent;
+```
+
+各事件至少满足：
+
+#### `session_init`
+- 必填：`kind`, `sessionId`, `timestamp`
+- 含义：运行时确认本轮可用会话标识；用于更新 `binding.agentSessionId`
+
+#### `turn_started`
+- 必填：`kind`, `timestamp`
+- 含义：当前回合开始；上层将线程标记为 busy
+
+#### `text_delta`
+- 必填：`kind`, `content`, `timestamp`
+- 含义：流式正文增量；直接用于主预览消息持续追加
+
+#### `text_final`
+- 必填：`kind`, `content`, `timestamp`
+- 含义：已经判定为最终正文的完整片段；若上层已累积 delta，则按覆盖或追加规则收敛
+
+#### `thinking`
+- 必填：`kind`, `content`, `timestamp`
+- 含义：思考态文本；不与正文混排
+
+#### `tool_use`
+- 必填：`kind`, `toolName`, `timestamp`
+- 可选：`toolCallId`, `toolInput`, `raw`
+- 含义：工具调用开始
+
+#### `tool_result`
+- 必填：`kind`, `timestamp`
+- 可选：`toolCallId`, `toolName`, `content`, `isError`, `raw`
+- 含义：工具结果摘要。`toolCallId` 在代理原生协议有稳定标识时必须携带；没有时可缺省
+
+#### `permission_request`
+- 必填：`kind`, `requestId`, `toolName`, `timestamp`
+- 可选：`toolInput`, `raw`
+- 含义：运行时请求用户审批；仅 `Claude` 预计会发出
+
+#### `permission_resolved`
+- 必填：`kind`, `requestId`, `decision`, `timestamp`
+- 含义：一次权限请求已被允许、拒绝、取消或超时
+- 生产者：**运行时负责发出**，因为只有运行时知道底层请求是否真正被接收、取消或关闭
+
+#### `turn_completed`
+- 必填：`kind`, `timestamp`
+- 可选：`sessionId`, `usage`, `done`
+- 含义：回合正常结束
+
+#### `turn_failed`
+- 必填：`kind`, `timestamp`, `message`, `failureKind`
+- 含义：这一轮失败，但运行时不一定损坏
+
+#### `runtime_error`
+- 必填：`kind`, `timestamp`, `message`, `runtimeFailureKind`
+- 含义：进程层、协议层或解析层错误，可能需要重建运行时
+
+### 4.5 恢复决策分类
+
+为了让上层决定是否保留 `agentSessionId`、是否允许下轮懒恢复，需要额外区分失败种类：
+
+- `recoverable_turn_failure`：本轮失败，但会话标识仍可能有效
+- `session_id_invalid`：会话标识失效，下轮不能直接恢复
+- `runtime_broken`：进程或协议损坏，需重建运行时
+- `transient_warning`：瞬态告警，不应直接打断恢复链路
+- `user_denied`：用户拒绝权限
+- `user_cancelled`：用户或上层主动取消
+
+`turn_failed` 与 `runtime_error` 必须至少携带其中一种分类，供状态同步层做恢复决策。
+
+### 4.6 逐代理映射规则样例
+
+#### Claude
+
+原生事件序列：
+
+```text
+system -> assistant(text/thinking/tool_use) -> control_request -> result
+```
+
+内部事件序列规则：
+
+- `system(session_id)` -> `session_init`
+- `assistant.thinking` -> `thinking`
+- `assistant.tool_use` -> `tool_use`
+- `assistant.text` -> 默认按 `text_delta` 处理
+- `result` -> 先发 `text_final`（若 `result.result` 含最终汇总文本），再发 `turn_completed`
+- `control_request(can_use_tool)` -> `permission_request`
+- `control_cancel_request` -> `permission_resolved(decision=cancelled)`
+
+#### Codex
+
+原生事件序列：
+
+```text
+thread.started -> turn.started -> item.started/item.completed -> turn.completed|turn.failed
+```
+
+内部事件序列规则：
+
+- `thread.started(thread_id)` -> `session_init`
+- `turn.started` -> `turn_started`
+- `reasoning` -> `thinking`
+- `agent_message` / `message`：
+  - 默认先缓冲
+  - 若随后进入工具调用，则将当前缓冲刷为 `thinking`
+  - 若直到 `turn.completed` 仍未转义，则刷为 `text_final`
+- `command_execution` / `function_call` 开始 -> `tool_use`
+- `command_execution` / `function_call` 完成：
+  - 当前轮先**保持与 Go 版主语义对齐**
+  - 默认只发 `tool_use`，不强制发 `tool_result`
+  - 若后续实现决定增强 `tool_result`，必须在计划里明确这是有意增强，不是对齐现状
+- `turn.completed` -> `turn_completed`
+- `turn.failed` -> `turn_failed(failureKind=recoverable_turn_failure)`
+
+#### Gemini
+
+原生事件序列：
+
+```text
+init -> message(delta/non-delta) -> tool_use -> tool_result -> result
+```
+
+内部事件序列规则：
+
+- `init(session_id)` -> `session_init`
+- `message(delta=true)` -> `text_delta`
+- 非 delta `message`：
+  - 先缓冲
+  - 若随后发生 `tool_use`，则将缓冲刷为 `thinking`
+  - 若直到 `result` 才结束，则刷为 `text_final`
+- `tool_use` -> `tool_use`
+- `tool_result` -> `tool_result`
+- `result(status=ok)` -> `turn_completed`
+- `result(status=error)` -> `turn_failed`
+
 ---
 
 ## 5. 三代理具体设计
@@ -244,6 +455,35 @@
 - 用户选择后调用 `RespondPermission`
 - 通过 `stdin` 写入 `control_response`
 
+### 权限状态机
+
+`Claude` 需要一套明确的 pending permission 状态机：
+
+- `running`
+- `awaiting_permission`
+- `permission_resolved`
+- `cancelled`
+- `timed_out`
+
+约束：
+
+- 单线程同一时刻只允许一个未决权限请求
+- 重复点击允许 / 拒绝必须幂等；首次成功响应后，后续点击只返回“已处理”
+- 默认超时策略定为：**自动拒绝**
+- 收到 `control_cancel_request` 时：
+  - 清理运行时内部 pending request
+  - 发出 `permission_resolved(decision=cancelled)`
+  - 通知 UI 清理按钮或改成已取消态
+- 若在 `awaiting_permission` 阶段调用 `cancel()`：
+  - 优先取消当前未决权限请求
+  - 再把回合状态收敛为 `user_cancelled`
+
+### 权限请求存放位置
+
+- pending permission 状态保存在 `ClaudeSessionRuntime` 内部
+- `SessionManager` 不直接保存请求对象，但可通过 `getPendingPermission()` 查询当前线程是否存在未决审批
+- UI 层根据 `permission_request` 事件创建交互消息，根据 `permission_resolved` 事件关闭交互态
+
 ### 取消与关闭
 
 - `cancel`：停止当前回合，必要时中断进程或发控制消息
@@ -254,6 +494,23 @@
 - 使用持久化的 `sessionId`
 - 下一轮消息到来时重建进程并带上恢复参数
 - 启动时不恢复旧进程对象
+
+### 命令拼装表
+
+| 场景 | 参数要求 |
+|---|---|
+| 新会话 | `claude --output-format stream-json --input-format stream-json --permission-prompt-tool stdio` |
+| 继续最近 | 额外带 `--continue --fork-session` |
+| 恢复指定会话 | 额外带 `--resume <sessionId>` |
+| 指定模型 | 额外带 `--model <model>` |
+| 指定权限模式 | 额外带 `--permission-mode <mode>` |
+| 允许/拒绝工具清单 | 额外带 `--allowedTools ...` / `--disallowedTools ...` |
+
+特殊要求：
+
+- 过滤环境变量 `CLAUDECODE`，避免被 CLI 识别为嵌套会话
+- `acceptEdits` / `dontAsk` / `bypassPermissions` 语义应与现有 Go 实现保持一致
+- 权限响应通过 `stdin` 写 `control_response`，必须有串行写保护
 
 ---
 
@@ -300,6 +557,21 @@ Codex 不走会话内权限回填，主要由 CLI 模式参数控制。因此：
 - `cancel`：终止当前子进程
 - `resume`：依赖已持久化 `thread_id`
 
+### 命令拼装表
+
+| 场景 | 参数要求 |
+|---|---|
+| 首轮 | `codex exec --skip-git-repo-check [mode flags] [model flags] [image flags] --json --cd <workDir> <prompt>` |
+| 恢复轮 | `codex exec resume --skip-git-repo-check [mode flags] [model flags] <thread_id> [image flags] --json <prompt>` |
+| 推理强度 | 使用 `-c model_reasoning_effort=<value>` |
+| 图片 | 使用 `--image <path>` |
+
+特殊要求：
+
+- 恢复轮参数顺序必须与现有 Go 实现一致
+- 恢复轮**不能带 `--cd`**，由 `cmd.Dir` 负责工作目录
+- 模式参数如 `--full-auto` / `--dangerously-bypass-approvals-and-sandbox` 应与现有 Go 语义一致
+
 ---
 
 ## 5.3 Gemini
@@ -340,9 +612,52 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 - `resume`：依赖已持久化 `chat_id`
 - 失败时允许线程重新绑定或重开
 
+### 命令拼装表
+
+| 场景 | 参数要求 |
+|---|---|
+| 首轮 | `gemini --output-format stream-json [mode flags] [model flags] -p <prompt>` |
+| 恢复轮 | `gemini --output-format stream-json [mode flags] --resume <chat_id> [model flags] -p <prompt>` |
+| yolo | `-y` |
+| auto_edit | `--approval-mode auto_edit` |
+| plan | `--approval-mode plan` |
+
+特殊要求：
+
+- 每轮超时由运行时配置提供，默认值应在配置层明确
+- 图片与文件都先转成本地引用再拼入 prompt
+- 恢复轮只依赖持久化 `chat_id`，不维持长驻进程状态
+
 ---
 
 ## 6. 会话绑定与恢复设计
+
+### 6.0 附件职责边界定稿
+
+当前一期代码里 `discord/message-handler.ts` 已经先做了附件落盘，但这与架构文档不完全一致。本次设计明确修正为：
+
+- `discord` / `app` 层：只负责收集原始文本、图片、文件输入
+- 新增共享附件处理层：负责文件名净化、目录策略、落盘、临时清理
+- 各运行时：只消费“已落盘引用”或“已编码载荷”
+
+也就是说，后续应把当前 `message-handler.ts` 中的直接落盘职责迁移到共享层，而不是继续留在 Discord 层。
+
+#### 目录策略
+
+- 持久附件目录：`<workDir>/.cc-connect/attachments/`
+- 持久图片目录：`<workDir>/.cc-connect/images/`
+- 临时目录：仅用于必须的短命转换产物，由运行时在回合结束后清理
+
+#### 各代理消费方式
+
+- `Claude`：
+  - 图片：运行时可从已收集的原始图片生成 base64 载荷，同时可保留持久副本
+  - 文件：消费已落盘文件引用
+- `Codex`：
+  - 图片：消费共享层产出的持久图片路径
+  - 文件：消费共享层产出的持久文件路径
+- `Gemini`：
+  - 图片 / 文件：优先消费共享层已落盘路径；若必须生成临时格式，再由运行时负责清理
 
 ### 6.1 需要持久化的关键数据
 
@@ -402,6 +717,35 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 - 更新运行态错误信息
 - 允许用户重开或重绑线程
 
+### 6.5 状态迁移表
+
+#### 长驻进程型（Claude）
+
+| 时机 | `processState` | 其他回写 |
+|---|---|---|
+| 创建会话对象，进程未就绪 | `not_started` | 不更新 `agentSessionId` |
+| 进程启动成功 | `running` | 刷新 `lastSeenAt` |
+| 收到 `session_init` | `running` | 更新 `agentSessionId` |
+| `turn_started` | `running` | `isBusy=true` |
+| `permission_request` | `running` | 标记 pending permission |
+| `turn_completed` | `idle` | `isBusy=false`，刷新 `lastSeenAt` |
+| `turn_failed(recoverable_turn_failure)` | `idle` | `isBusy=false`，保留 `agentSessionId` |
+| `runtime_error(runtime_broken)` | `broken` | `isBusy=false` |
+| 正常关闭 | `exited` | `isBusy=false` |
+
+#### 每轮恢复型（Codex / Gemini）
+
+| 时机 | `processState` | 其他回写 |
+|---|---|---|
+| 创建逻辑会话对象 | `not_started` | 可已有旧 `agentSessionId` |
+| 启动本轮子进程 | `running` | `isBusy=true` |
+| 收到 `session_init` | `running` | 更新 `agentSessionId` |
+| `turn_completed` | `idle` | `isBusy=false`，刷新 `lastSeenAt` |
+| `turn_failed(recoverable_turn_failure)` | `idle` | `isBusy=false`，通常保留 `agentSessionId` |
+| `turn_failed(session_id_invalid)` | `idle` | `isBusy=false`，清空或作废 `agentSessionId` |
+| `runtime_error(runtime_broken)` | `broken` | `isBusy=false` |
+| 主动 `cancel` | `idle` | `isBusy=false`，按错误分类保留或保留 `agentSessionId` |
+
 ---
 
 ## 7. Discord 消费模型
@@ -454,6 +798,8 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 
 - `turn_failed`：这一轮失败，但会话标识可能仍可恢复
 - `runtime_error`：进程层或协议层错误，可能需要重建运行时
+
+但上层恢复决策不能只靠这两个大类，还必须读取第 4.5 节定义的失败分类。
 
 ### 8.3 权限请求超时
 
@@ -538,6 +884,18 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 - 先把三家 CLI 运行模型真实落地，再做 UI 层联动
 - 权限回路复杂度最高，放在基础运行链路稳定后处理更稳
 
+### 10.1 对 `streaming.ts` 的明确要求
+
+当前 `app/streaming.ts` 只支持简单 `push(delta)`，后续不能只“接一下事件”，而应升级为结构化事件消费者，至少能处理：
+
+- 正文增量
+- 最终正文收敛
+- thinking 区域
+- 工具轨迹
+- 权限侧消息
+- 完成收尾
+- 失败收尾
+
 ---
 
 ## 11. 风险与应对
@@ -585,4 +943,3 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 - 服务重启后执行中线程标记为 `interrupted`
 - 下一轮消息触发懒恢复，而不是启动即重拉全部进程
 - 错误、取消、异常退出都有明确状态反馈
-
