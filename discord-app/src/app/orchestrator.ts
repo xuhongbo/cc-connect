@@ -31,7 +31,7 @@ export interface CreateConversationThreadInput {
   requestedTitle: string;
 }
 
-export function createOrchestrator(deps?: {
+export function createOrchestrator(deps: {
   threadsRepo: ThreadsRepoLike;
   bindingsRepo: BindingsRepoLike;
   runtimeStateRepo: RuntimeStateRepoLike;
@@ -41,9 +41,6 @@ export function createOrchestrator(deps?: {
       return resolution;
     },
     async createConversationThread(input: CreateConversationThreadInput) {
-      if (!deps) {
-        throw new Error('orchestrator repositories are required');
-      }
       const bundle = createThreadBundle(input);
       await deps.threadsRepo.upsert(bundle.thread);
       await deps.bindingsRepo.upsert(bundle.binding);
@@ -52,3 +49,5 @@ export function createOrchestrator(deps?: {
     },
   };
 }
+
+export type Orchestrator = ReturnType<typeof createOrchestrator>;

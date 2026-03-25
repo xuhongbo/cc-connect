@@ -5,6 +5,7 @@ import type { Project } from '../domain/project.js';
 import type { AgentRuntimeProjectContext } from '../agents/types.js';
 import type { AgentsManager } from '../agents/manager.js';
 import type { SessionManager } from '../sessions/session-manager.js';
+import type { RuntimeEventPump } from '../app/runtime-event-pump.js';
 import { stageAttachments } from '../utils/files.js';
 
 interface ThreadsRepoLike {
@@ -37,6 +38,7 @@ export interface HandleThreadMessageInput {
   bindingsRepo: BindingsRepoLike;
   agents: AgentsManager;
   sessions: SessionManager;
+  eventPump: RuntimeEventPump;
 }
 
 export async function handleThreadMessage(input: HandleThreadMessageInput): Promise<{ accepted: boolean; reason?: string }> {
@@ -49,14 +51,17 @@ export async function handleThreadMessage(input: HandleThreadMessageInput): Prom
     return { accepted: false, reason: 'Thread is busy.' };
   }
 
+  let pumpActivated = false;
   try {
     const binding = await input.bindingsRepo.getByThreadRecordId(thread.id);
     if (!binding) {
+      input.sessions.finishTurn(thread.id);
       return { accepted: false, reason: 'Thread has no bound agent session.' };
     }
 
     const adapter = input.agents.get(binding.agentKind);
     if (!adapter) {
+      input.sessions.finishTurn(thread.id);
       return { accepted: false, reason: `No adapter registered for ${binding.agentKind}.` };
     }
 
@@ -97,13 +102,18 @@ export async function handleThreadMessage(input: HandleThreadMessageInput): Prom
       mode: binding.mode,
     }));
 
+    input.eventPump.ensurePump(thread.id, runtime);
     await runtime.send({
       text: input.text,
       files: staged.files,
       images: staged.images,
     });
+    pumpActivated = true;
     return { accepted: true };
-  } finally {
-    input.sessions.finishTurn(thread.id);
+  } catch (err) {
+    if (!pumpActivated) {
+      input.sessions.finishTurn(thread.id);
+    }
+    throw err;
   }
 }

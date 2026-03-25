@@ -11,10 +11,13 @@ import { createAgentsManager } from '../src/agents/manager.js';
 import { createSessionManager } from '../src/sessions/session-manager.js';
 import { NoopSessionRuntime } from '../src/agents/base/cli-agent.js';
 import { handleThreadMessage } from '../src/discord/message-handler.js';
+import { createRuntimeEventPump } from '../src/app/runtime-event-pump.js';
 import type { CreateAgentSessionInput } from '../src/agents/types.js';
 
 describe('message handler runtime context', () => {
   it('passes only the minimal runtime context and explicit workDir', async () => {
+    const sessions = createSessionManager();
+    const eventPump = createRuntimeEventPump(sessions);
     const threadsRepo = {
       async getByThreadId() {
         return thread;
@@ -26,7 +29,6 @@ describe('message handler runtime context', () => {
       },
     };
     const agents = createAgentsManager();
-    const sessions = createSessionManager();
     let capturedInput: CreateAgentSessionInput | null = null;
     agents.register({
       kind: 'claude',
@@ -79,10 +81,11 @@ describe('message handler runtime context', () => {
         text: 'Hello',
         project,
         workDir,
-        threadsRepo,
-        bindingsRepo,
-        agents,
-        sessions,
+      threadsRepo,
+      bindingsRepo,
+      agents,
+      sessions,
+      eventPump,
       });
 
       expect(capturedInput).not.toBeNull();
