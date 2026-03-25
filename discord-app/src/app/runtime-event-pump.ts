@@ -33,7 +33,10 @@ export function createRuntimeEventPump(
         let finished = false;
         try {
           for await (const event of runtime.events()) {
-            await (onEvent ?? hooks?.onEvent)?.(threadRecordId, event);
+            await hooks?.onEvent?.(threadRecordId, event);
+            if (onEvent) {
+              await onEvent(threadRecordId, event);
+            }
             if (TERMINATING_EVENTS.has(event.kind as TerminatingEventKind)) {
               sessionManager.finishTurn(threadRecordId);
               finished = true;

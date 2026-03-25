@@ -1,11 +1,18 @@
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
 import { bootstrap } from './app/bootstrap.js';
 import { registerCommands } from './discord/commands/register.js';
 import { bindDiscordInteractionHandlers } from './discord/client.js';
-import { createPermissionActions } from './discord/interactions/permission-actions.js';
+import { createPermissionActionId, createPermissionActions } from './discord/interactions/permission-actions.js';
 import { handleThreadMessage } from './discord/message-handler.js';
 import { buildRuntimeErrorText } from './discord/ui/embeds.js';
+import { createStreamingPreview } from './app/streaming.js';
 import type { AttachmentRef } from './domain/last-turn.js';
 import type { Project } from './domain/project.js';
+import { buildPermissionStatusMessage } from './discord/ui/messages.js';
 
 void (async () => {
   const app = await bootstrap();
@@ -218,6 +225,31 @@ void (async () => {
 
     const { files, images } = await resolveMessageAttachments(message);
     try {
+      let previewStarted = false;
+      const preview = createStreamingPreview({
+        create: async (content) => {
+          const sent = await message.reply?.(content);
+          const messageId = sent?.id ?? `${message.channelId}:${Date.now()}`;
+          const runtimeState = await app.repos.runtimeStates.getByThreadRecordId(thread.id);
+          if (runtimeState) {
+            await app.repos.runtimeStates.upsert({
+              ...runtimeState,
+              lastPreviewMessageId: messageId,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+          return {
+            messageId,
+            content,
+          };
+        },
+        update: async (messageId, content) => {
+          const existing = await message.channel?.messages?.fetch?.(messageId).catch(() => null);
+          await existing?.edit?.(content);
+        },
+        throttleMs: 0,
+      });
+
       const result = await handleThreadMessage({
         threadId: message.channelId,
         text: message.content ?? '',
@@ -230,6 +262,40 @@ void (async () => {
         agents: app.agents,
         sessions: app.sessions,
         eventPump: app.eventPump,
+        onRuntimeEvent: async (threadRecordId, event) => {
+          if (!previewStarted) {
+            await preview.start('处理中');
+            previewStarted = true;
+          }
+
+          if (event.kind === 'permission_request') {
+            await message.channel?.send?.({
+              content: buildPermissionStatusMessage(event.toolName),
+              components: [
+                new ActionRowBuilder<ButtonBuilder>().addComponents(
+                  new ButtonBuilder()
+                    .setCustomId(createPermissionActionId({
+                      threadRecordId,
+                      requestId: event.requestId,
+                      decision: 'approved',
+                    }))
+                    .setLabel('允许')
+                    .setStyle(ButtonStyle.Success),
+                  new ButtonBuilder()
+                    .setCustomId(createPermissionActionId({
+                      threadRecordId,
+                      requestId: event.requestId,
+                      decision: 'denied',
+                    }))
+                    .setLabel('拒绝')
+                    .setStyle(ButtonStyle.Danger),
+                ),
+              ],
+            });
+          }
+
+          await preview.applyEvent(event);
+        },
       });
 
       if (!result.accepted && result.reason) {

@@ -3,6 +3,7 @@ import type { ConversationThread } from '../domain/thread.js';
 import type { AgentSessionBinding } from '../domain/session-binding.js';
 import type { Project } from '../domain/project.js';
 import type { AgentRuntimeProjectContext } from '../agents/types.js';
+import type { AgentRuntimeEvent } from '../agents/events.js';
 import type { AgentsManager } from '../agents/manager.js';
 import type { SessionManager } from '../sessions/session-manager.js';
 import type { RuntimeEventPump } from '../app/runtime-event-pump.js';
@@ -32,6 +33,7 @@ export interface HandleThreadMessageInput {
   agents: AgentsManager;
   sessions: SessionManager;
   eventPump: RuntimeEventPump;
+  onRuntimeEvent?: (threadRecordId: string, event: AgentRuntimeEvent) => Promise<void> | void;
 }
 
 export async function handleThreadMessage(input: HandleThreadMessageInput): Promise<{ accepted: boolean; reason?: string }> {
@@ -92,7 +94,7 @@ export async function handleThreadMessage(input: HandleThreadMessageInput): Prom
       mode: binding.mode,
     }));
 
-    input.eventPump.ensurePump(thread.id, runtime);
+    input.eventPump.ensurePump(thread.id, runtime, input.onRuntimeEvent);
     await runtime.send({
       text: input.text,
       files: staged.files,
