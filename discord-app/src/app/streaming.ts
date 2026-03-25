@@ -1,3 +1,5 @@
+import type { AgentRuntimeEvent } from '../agents/events.js';
+
 export interface PreviewMessage {
   messageId: string;
   content: string;
@@ -15,6 +17,7 @@ export interface StreamingPreview {
   finish(finalContent: string): Promise<void>;
   fail(errorContent: string): Promise<void>;
   getMessageId(): string;
+  applyEvent(event: AgentRuntimeEvent): Promise<void>;
 }
 
 export function createStreamingPreview(deps: StreamingPreviewDeps): StreamingPreview {
@@ -44,6 +47,41 @@ export function createStreamingPreview(deps: StreamingPreviewDeps): StreamingPre
     },
     getMessageId(): string {
       return messageId;
+    },
+    async applyEvent(event: AgentRuntimeEvent): Promise<void> {
+      switch (event.kind) {
+        case 'text_delta':
+          await this.push(event.content);
+          break;
+        case 'text_final':
+          await this.finish(event.content);
+          break;
+        case 'thinking':
+          await this.push(`\n[thinking] ${event.content}`);
+          break;
+        case 'tool_use':
+          await this.push(`\n[tool] ${event.toolName}`);
+          break;
+        case 'tool_result':
+          if (event.content) {
+            await this.push(`\n[result] ${event.content}`);
+          }
+          break;
+        case 'permission_request':
+          await this.push(`\n[permission] ${event.toolName}`);
+          break;
+        case 'turn_completed':
+          await this.finish(currentText);
+          break;
+        case 'turn_failed':
+          await this.fail(event.message);
+          break;
+        case 'runtime_error':
+          await this.fail(event.message);
+          break;
+        default:
+          break;
+      }
     },
   };
 }
