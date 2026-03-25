@@ -11,6 +11,7 @@ export interface SessionManager {
   getLastTurnSnapshot(threadRecordId: string): LastTurnSnapshot | null;
   setRuntime(threadRecordId: string, runtime: AgentSessionRuntime): void;
   getRuntime(threadRecordId: string): AgentSessionRuntime | null;
+  clearRuntime(threadRecordId: string): void;
 }
 
 export function createSessionManager(): SessionManager {
@@ -40,6 +41,9 @@ export function createSessionManager(): SessionManager {
     },
     getRuntime(threadRecordId: string): AgentSessionRuntime | null {
       return runtimes.get(threadRecordId) ?? null;
+    },
+    clearRuntime(threadRecordId: string): void {
+      runtimes.delete(threadRecordId);
     },
   };
 }
