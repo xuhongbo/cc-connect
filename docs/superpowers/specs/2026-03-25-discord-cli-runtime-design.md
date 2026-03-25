@@ -193,6 +193,27 @@ interface AgentSessionRuntime {
 }
 ```
 
+#### `send()` 完成语义
+
+`send()` 在本设计中**只负责把本轮消息成功提交给运行时并启动本轮**，不会阻塞到整轮结束。
+
+这意味着：
+
+- `await runtime.send()` 成功，只表示“本轮已开始”
+- 回合真正结束只以事件流中的以下事件为准：
+  - `turn_completed`
+  - `turn_failed`
+  - `runtime_error`
+- 上层**不得**在 `await send()` 之后立即调用 `finishTurn()`
+- 线程 busy 生命周期由事件驱动，而不是由 `send()` 返回驱动
+- `send()` 若在提交前就失败，应直接抛错，且不发 `turn_started`
+
+#### 事件流消费约束
+
+- 每个线程的 `events()` 只允许一个上层消费方
+- 由 `app/orchestrator.ts` 或专用事件泵统一消费，再把结果分发到 streaming / persistence / UI
+- 禁止多个调用方并发读取同一个运行时事件流
+
 #### 会话对象生命周期
 
 - `Claude`：线程级会话对象长期保留；真实长驻进程断开后，会话对象仍可保留逻辑绑定与 `sessionId`
@@ -346,6 +367,18 @@ type AgentRuntimeEvent =
 
 `turn_failed` 与 `runtime_error` 必须至少携带其中一种分类，供状态同步层做恢复决策。
 
+#### `turn_failed.failureKind`
+
+- `recoverable_turn_failure`
+- `session_id_invalid`
+- `user_denied`
+- `user_cancelled`
+
+#### `runtime_error.runtimeFailureKind`
+
+- `runtime_broken`
+- `transient_warning`
+
 ### 4.6 逐代理映射规则样例
 
 #### Claude
@@ -431,12 +464,12 @@ init -> message(delta/non-delta) -> tool_use -> tool_result -> result
 ### 输入方式
 
 - 纯文本：通过 `stdin` 发送 JSON 用户消息
-- 图片：作为 base64 内容块发送，同时可保留本地落盘副本
-- 文件：先落盘，再将文件路径追加到提示中，供 CLI 工具读取
+- 图片：从共享附件层提供的已落盘图片路径读取内容，再由 `ClaudeSessionRuntime` 编码成 base64 内容块
+- 文件：消费共享附件层提供的已落盘文件路径，并将文件路径追加到提示中，供 CLI 工具读取
 
 ### 输出事件
 
-重点映射：
+重点映射（以第 4.6 节为唯一规范源）：
 
 - `system` -> `session_init`
 - `assistant.text` -> `text_delta` 或 `text_final`
@@ -511,6 +544,7 @@ init -> message(delta/non-delta) -> tool_use -> tool_result -> result
 - 过滤环境变量 `CLAUDECODE`，避免被 CLI 识别为嵌套会话
 - `acceptEdits` / `dontAsk` / `bypassPermissions` 语义应与现有 Go 实现保持一致
 - 权限响应通过 `stdin` 写 `control_response`，必须有串行写保护
+- `turn_started` 由运行时在“用户输入成功写入 Claude stdin 后”合成发出；若写入失败则直接报错，不发 `turn_started`
 
 ---
 
@@ -527,19 +561,19 @@ init -> message(delta/non-delta) -> tool_use -> tool_result -> result
 ### 输入方式
 
 - 文本：作为命令末尾提示词传入
-- 图片：先落盘，再以 `--image <path>` 传入
-- 文件：先落盘，再把本地文件引用拼到提示词中
+- 图片：消费共享附件层提供的已落盘图片路径，再以 `--image <path>` 传入
+- 文件：消费共享附件层提供的已落盘文件路径，再把本地文件引用拼到提示词中
 
 ### 输出事件
 
-从 JSON 行事件中映射：
+从 JSON 行事件中映射（以第 4.6 节为唯一规范源）：
 
 - `thread.started` -> `session_init`
 - `turn.started` -> `turn_started`
 - `reasoning` -> `thinking`
-- `agent_message` -> `text_delta` / `text_final`
+- `agent_message` 先缓冲；在工具前刷为 `thinking`，在 `turn.completed` 前刷为 `text_final`
 - `command_execution` / `function_call` / 搜索类项目 -> `tool_use`
-- 工具输出摘要 -> `tool_result`
+- 默认先不强制发送 `tool_result`
 - `turn.completed` -> `turn_completed`
 - `turn.failed` -> `turn_failed`
 - 进程失败 / stderr -> `runtime_error`
@@ -588,11 +622,11 @@ Codex 不走会话内权限回填，主要由 CLI 模式参数控制。因此：
 ### 输入方式
 
 - 文本：通过 `-p` 传入
-- 图片 / 文件：先落盘，再以文件引用方式拼入提示
+- 图片 / 文件：消费共享附件层提供的已落盘路径，再以文件引用方式拼入提示
 
 ### 输出事件
 
-从 JSON 流映射：
+从 JSON 流映射（以第 4.6 节为唯一规范源）：
 
 - `init` -> `session_init`
 - `message(delta=true)` -> `text_delta`
@@ -651,8 +685,8 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 #### 各代理消费方式
 
 - `Claude`：
-  - 图片：运行时可从已收集的原始图片生成 base64 载荷，同时可保留持久副本
-  - 文件：消费已落盘文件引用
+  - 图片：消费共享层产出的持久图片路径，并在运行时读取后编码为 base64
+  - 文件：消费共享层产出的持久文件路径
 - `Codex`：
   - 图片：消费共享层产出的持久图片路径
   - 文件：消费共享层产出的持久文件路径
@@ -744,7 +778,7 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 | `turn_failed(recoverable_turn_failure)` | `idle` | `isBusy=false`，通常保留 `agentSessionId` |
 | `turn_failed(session_id_invalid)` | `idle` | `isBusy=false`，清空或作废 `agentSessionId` |
 | `runtime_error(runtime_broken)` | `broken` | `isBusy=false` |
-| 主动 `cancel` | `idle` | `isBusy=false`，按错误分类保留或保留 `agentSessionId` |
+| 主动 `cancel` | `idle` | `isBusy=false`，按错误分类保留或清空 `agentSessionId` |
 
 ---
 
@@ -806,7 +840,7 @@ Gemini 与 Codex 类似，权限主要由模式参数控制，不走会话内交
 对 `Claude`：
 
 - 等待用户操作期间线程保持忙碌
-- 若超时，可自动拒绝或将状态切为等待用户重试
+- 一期默认超时策略为自动拒绝
 - 需要显式记录 pending request id，避免重复响应
 
 ### 8.4 异常退出
