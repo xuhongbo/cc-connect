@@ -17,6 +17,10 @@
 **Files:**
 - Modify: `discord-app/src/agents/types.ts`
 - Modify: `discord-app/src/agents/events.ts`
+- Modify: `discord-app/src/agents/base/cli-agent.ts`
+- Modify: `discord-app/src/agents/claude/claude-agent.ts`
+- Modify: `discord-app/src/agents/codex/codex-agent.ts`
+- Modify: `discord-app/src/agents/gemini/gemini-agent.ts`
 - Test: `discord-app/test/agent-runtime-contracts.test.ts`
 
 - [ ] **Step 1: 写运行时契约测试**
@@ -49,7 +53,7 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/agents/types.ts discord-app/src/agents/events.ts discord-app/test/agent-runtime-contracts.test.ts
+git add discord-app/src/agents/types.ts discord-app/src/agents/events.ts discord-app/src/agents/base/cli-agent.ts discord-app/src/agents/claude/claude-agent.ts discord-app/src/agents/codex/codex-agent.ts discord-app/src/agents/gemini/gemini-agent.ts discord-app/test/agent-runtime-contracts.test.ts
 git commit -m "feat: define runtime contracts for discord cli agents"
 ```
 
@@ -57,8 +61,10 @@ git commit -m "feat: define runtime contracts for discord cli agents"
 
 **Files:**
 - Modify: `discord-app/src/sessions/session-manager.ts`
+- Modify: `discord-app/src/sessions/thread-session-map.ts`
 - Modify: `discord-app/src/discord/message-handler.ts`
 - Modify: `discord-app/src/app/orchestrator.ts`
+- Create: `discord-app/src/app/runtime-event-pump.ts`
 - Test: `discord-app/test/thread-turn-lifecycle.test.ts`
 
 - [ ] **Step 1: 写线程回合生命周期测试**
@@ -78,7 +84,7 @@ Expected: FAIL
 
 要求：
 - 不再在 `await runtime.send()` 后立即 `finishTurn()`
-- 由 orchestrator 或专门事件泵统一消费事件流
+- 由 `discord-app/src/app/runtime-event-pump.ts` 作为唯一事件消费方统一消费事件流
 - `SessionManager` 要能追踪“逻辑会话对象”与“当前回合是否已启动”
 - 先不做复杂队列
 
@@ -90,7 +96,7 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/sessions/session-manager.ts discord-app/src/discord/message-handler.ts discord-app/src/app/orchestrator.ts discord-app/test/thread-turn-lifecycle.test.ts
+git add discord-app/src/sessions/session-manager.ts discord-app/src/sessions/thread-session-map.ts discord-app/src/discord/message-handler.ts discord-app/src/app/orchestrator.ts discord-app/src/app/runtime-event-pump.ts discord-app/test/thread-turn-lifecycle.test.ts
 git commit -m "feat: drive thread turns from runtime events"
 ```
 
@@ -182,6 +188,7 @@ git commit -m "refactor: centralize attachment staging for cli runtimes"
 
 **Files:**
 - Create: `discord-app/src/agents/claude/claude-event-parser.ts`
+- Create: `discord-app/src/agents/claude/claude-permission-state.ts`
 - Test: `discord-app/test/claude-event-parser.test.ts`
 
 - [ ] **Step 1: 写 Claude 解析器测试**
@@ -204,6 +211,9 @@ Expected: FAIL
 - [ ] **Step 3: 写最小 Claude 解析器实现**
 
 要求：
+- `claude-event-parser.ts` 只负责原始事件解析与状态转移建议
+- `claude-permission-state.ts` 负责 pending permission 的真实持有与状态推进
+- `ClaudeSessionRuntime` 后续必须作为 pending permission 的最终所有者
 - 权限状态机至少覆盖 `running`、`awaiting_permission`、`permission_resolved`、`cancelled`、`timed_out`
 - 重复权限响应保持幂等
 - 默认超时策略是自动拒绝
@@ -217,7 +227,7 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/agents/claude/claude-event-parser.ts discord-app/test/claude-event-parser.test.ts
+git add discord-app/src/agents/claude/claude-event-parser.ts discord-app/src/agents/claude/claude-permission-state.ts discord-app/test/claude-event-parser.test.ts
 git commit -m "feat: add claude event parser and permission state machine"
 ```
 
@@ -232,9 +242,9 @@ git commit -m "feat: add claude event parser and permission state machine"
 - [ ] **Step 1: 写 Codex 与 Gemini 解析器测试**
 
 测试点：
-- Codex：`thread.started`、`turn.started`、`reasoning`、`agent_message`、`item.started`、`turn.completed`、`turn.failed`
+- Codex：使用最小 JSON 夹具覆盖 `thread.started`、`turn.started`、`item.started.item.type=command_execution|function_call`、`item.completed.item.type=reasoning|agent_message|message`、`turn.completed`、`turn.failed`
 - Codex：工具前把缓冲正文刷成 `thinking`，回合结束前把缓冲正文刷成 `text_final`
-- Gemini：`init`、`message(delta=true)`、非 delta `message`、`tool_use`、`tool_result`、`result(status=ok|error)`
+- Gemini：使用最小 JSON 夹具覆盖 `init`、`message(delta=true)`、非 delta `message`、`tool_use`、`tool_result`、`result(status=ok|error)`
 - Gemini：非 delta message 在工具前刷 `thinking`，否则刷 `text_final`
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -268,7 +278,9 @@ git commit -m "feat: add codex and gemini event parsers"
 **Files:**
 - Modify: `discord-app/src/agents/claude/claude-session.ts`
 - Modify: `discord-app/src/agents/claude/claude-agent.ts`
+- Modify: `discord-app/src/app/bootstrap.ts`
 - Test: `discord-app/test/claude-runtime.test.ts`
+- Test: `discord-app/test/bootstrap-claude-registration.test.ts`
 
 - [ ] **Step 1: 写 Claude 运行时测试**
 
@@ -276,14 +288,17 @@ git commit -m "feat: add codex and gemini event parsers"
 - 命令包含 `--output-format stream-json`、`--input-format stream-json`、`--permission-prompt-tool stdio`
 - 继续最近时包含 `--continue --fork-session`
 - 恢复指定会话时包含 `--resume <sessionId>`
+- `--model`、`--permission-mode`、`--allowedTools`、`--disallowedTools` 参数会正确拼装
+- `acceptEdits` / `dontAsk` / `bypassPermissions` 对齐现有 Go 语义
 - 过滤 `CLAUDECODE` 环境变量
 - `stdin` 写入成功后发出 `turn_started`
 - 权限响应会回写 `control_response`
 - 关闭超时后会进入强制终止路径
+- `bootstrap` 会注册真实 Claude adapter，而不是只保留空 manager
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd discord-app && npm test -- claude-runtime.test.ts`
+Run: `cd discord-app && npm test -- claude-runtime.test.ts bootstrap-claude-registration.test.ts`
 Expected: FAIL
 
 - [ ] **Step 3: 写最小 Claude 真实运行时实现**
@@ -297,13 +312,13 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd discord-app && npm test -- claude-runtime.test.ts`
+Run: `cd discord-app && npm test -- claude-runtime.test.ts bootstrap-claude-registration.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/agents/claude/claude-session.ts discord-app/src/agents/claude/claude-agent.ts discord-app/test/claude-runtime.test.ts
+git add discord-app/src/agents/claude/claude-session.ts discord-app/src/agents/claude/claude-agent.ts discord-app/src/app/bootstrap.ts discord-app/test/claude-runtime.test.ts discord-app/test/bootstrap-claude-registration.test.ts
 git commit -m "feat: add real claude cli runtime"
 ```
 
@@ -312,7 +327,9 @@ git commit -m "feat: add real claude cli runtime"
 **Files:**
 - Modify: `discord-app/src/agents/codex/codex-session.ts`
 - Modify: `discord-app/src/agents/codex/codex-agent.ts`
+- Modify: `discord-app/src/app/bootstrap.ts`
 - Test: `discord-app/test/codex-runtime.test.ts`
+- Test: `discord-app/test/bootstrap-codex-registration.test.ts`
 
 - [ ] **Step 1: 写 Codex 运行时测试**
 
@@ -320,13 +337,15 @@ git commit -m "feat: add real claude cli runtime"
 - 首轮命令走 `codex exec --skip-git-repo-check`
 - 恢复轮走 `codex exec resume --skip-git-repo-check <thread_id> ... --json <prompt>`
 - 恢复轮不带 `--cd`
-- `reasoningEffort` 转成 `-c model_reasoning_effort=...`
+- `reasoningEffort` 转成单个 argv 参数 `model_reasoning_effort=\"<value>\"`，命令展示里的外层单引号仅用于 shell 展示
+- `--model`、`--full-auto`、`--dangerously-bypass-approvals-and-sandbox` 参数会正确拼装
 - 图片路径转成 `--image <path>`
 - 取消会结束当前子进程
+- `bootstrap` 会注册真实 Codex adapter
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd discord-app && npm test -- codex-runtime.test.ts`
+Run: `cd discord-app && npm test -- codex-runtime.test.ts bootstrap-codex-registration.test.ts`
 Expected: FAIL
 
 - [ ] **Step 3: 写最小 Codex 真实运行时实现**
@@ -339,13 +358,13 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd discord-app && npm test -- codex-runtime.test.ts`
+Run: `cd discord-app && npm test -- codex-runtime.test.ts bootstrap-codex-registration.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/agents/codex/codex-session.ts discord-app/src/agents/codex/codex-agent.ts discord-app/test/codex-runtime.test.ts
+git add discord-app/src/agents/codex/codex-session.ts discord-app/src/agents/codex/codex-agent.ts discord-app/src/app/bootstrap.ts discord-app/test/codex-runtime.test.ts discord-app/test/bootstrap-codex-registration.test.ts
 git commit -m "feat: add real codex cli runtime"
 ```
 
@@ -354,7 +373,11 @@ git commit -m "feat: add real codex cli runtime"
 **Files:**
 - Modify: `discord-app/src/agents/gemini/gemini-session.ts`
 - Modify: `discord-app/src/agents/gemini/gemini-agent.ts`
+- Modify: `discord-app/src/config/env.ts`
+- Modify: `discord-app/src/app/bootstrap.ts`
 - Test: `discord-app/test/gemini-runtime.test.ts`
+- Test: `discord-app/test/env-bootstrap.test.ts`
+- Test: `discord-app/test/bootstrap-gemini-registration.test.ts`
 
 - [ ] **Step 1: 写 Gemini 运行时测试**
 
@@ -362,13 +385,16 @@ git commit -m "feat: add real codex cli runtime"
 - 命令包含 `--output-format stream-json`
 - 恢复轮带 `--resume <chat_id>`
 - `yolo` / `auto_edit` / `plan` 能映射到正确参数
+- `-m <model>` 参数会正确拼装
 - 每轮有独立超时
 - 图片与文件通过已落盘路径拼入 prompt
 - 取消会结束当前进程
+- Gemini 默认超时值来自配置层并在 bootstrap 中注入
+- `bootstrap` 会注册真实 Gemini adapter
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `cd discord-app && npm test -- gemini-runtime.test.ts`
+Run: `cd discord-app && npm test -- gemini-runtime.test.ts env-bootstrap.test.ts bootstrap-gemini-registration.test.ts`
 Expected: FAIL
 
 - [ ] **Step 3: 写最小 Gemini 真实运行时实现**
@@ -381,13 +407,13 @@ Expected: FAIL
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `cd discord-app && npm test -- gemini-runtime.test.ts`
+Run: `cd discord-app && npm test -- gemini-runtime.test.ts env-bootstrap.test.ts bootstrap-gemini-registration.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/agents/gemini/gemini-session.ts discord-app/src/agents/gemini/gemini-agent.ts discord-app/test/gemini-runtime.test.ts
+git add discord-app/src/agents/gemini/gemini-session.ts discord-app/src/agents/gemini/gemini-agent.ts discord-app/src/config/env.ts discord-app/src/app/bootstrap.ts discord-app/test/gemini-runtime.test.ts discord-app/test/env-bootstrap.test.ts discord-app/test/bootstrap-gemini-registration.test.ts
 git commit -m "feat: add real gemini cli runtime"
 ```
 
@@ -397,6 +423,8 @@ git commit -m "feat: add real gemini cli runtime"
 
 **Files:**
 - Modify: `discord-app/src/app/orchestrator.ts`
+- Modify: `discord-app/src/app/runtime-event-pump.ts`
+- Modify: `discord-app/src/app/bootstrap.ts`
 - Modify: `discord-app/src/sessions/session-manager.ts`
 - Modify: `discord-app/src/sessions/recovery.ts`
 - Modify: `discord-app/src/storage/repositories/session-bindings-repo.ts`
@@ -432,14 +460,61 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/app/orchestrator.ts discord-app/src/sessions/session-manager.ts discord-app/src/sessions/recovery.ts discord-app/src/storage/repositories/session-bindings-repo.ts discord-app/src/storage/repositories/runtime-state-repo.ts discord-app/test/runtime-state-sync.test.ts
+git add discord-app/src/app/orchestrator.ts discord-app/src/app/runtime-event-pump.ts discord-app/src/app/bootstrap.ts discord-app/src/sessions/session-manager.ts discord-app/src/sessions/recovery.ts discord-app/src/storage/repositories/session-bindings-repo.ts discord-app/src/storage/repositories/runtime-state-repo.ts discord-app/test/runtime-state-sync.test.ts
 git commit -m "feat: sync runtime events into persistence and recovery"
 ```
 
-### Task 11: 把结构化事件接入流式预览与权限交互
+### Task 11: 接通 Discord 侧权限审批与取消回路
+
+**Files:**
+- Modify: `discord-app/src/app/bootstrap.ts`
+- Modify: `discord-app/src/discord/client.ts`
+- Modify: `discord-app/src/app/orchestrator.ts`
+- Modify: `discord-app/src/app/runtime-event-pump.ts`
+- Create: `discord-app/src/discord/interactions/permission-actions.ts`
+- Modify: `discord-app/src/discord/commands/session.ts`
+- Test: `discord-app/test/claude-permission-roundtrip.test.ts`
+- Test: `discord-app/test/session-cancel-routing.test.ts`
+
+- [ ] **Step 1: 写权限审批与取消路由测试**
+
+测试点：
+- `permission_request` 会产出可回写的交互动作
+- 用户允许 / 拒绝会调用 `ClaudeSessionRuntime.respondPermission()`
+- 重复点击保持幂等
+- `/session cancel` 或对应线程内动作会调用当前运行时的 `cancel()`
+- `control_cancel_request` 或用户取消后 UI 状态会正确收敛
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd discord-app && npm test -- claude-permission-roundtrip.test.ts session-cancel-routing.test.ts`
+Expected: FAIL
+
+- [ ] **Step 3: 写最小 Discord 侧交互接线实现**
+
+要求：
+- `bootstrap.ts` 负责把 `client`、`orchestrator`、`runtime-event-pump` 与 `permission-actions` 组装到同一条真实运行链路
+- 交互入口固定在 `discord-app/src/discord/interactions/permission-actions.ts`
+- orchestrator 负责把交互动作路由到对应线程运行时
+- 取消先走最小命令和交互链路，不提前实现完整面板系统
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd discord-app && npm test -- claude-permission-roundtrip.test.ts session-cancel-routing.test.ts`
+Expected: PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add discord-app/src/app/bootstrap.ts discord-app/src/discord/client.ts discord-app/src/app/orchestrator.ts discord-app/src/app/runtime-event-pump.ts discord-app/src/discord/interactions/permission-actions.ts discord-app/src/discord/commands/session.ts discord-app/test/claude-permission-roundtrip.test.ts discord-app/test/session-cancel-routing.test.ts
+git commit -m "feat: wire discord permission approvals and cancel actions"
+```
+
+### Task 12: 把结构化事件接入流式预览与权限交互
 
 **Files:**
 - Modify: `discord-app/src/app/streaming.ts`
+- Modify: `discord-app/src/app/runtime-event-pump.ts`
 - Modify: `discord-app/src/discord/ui/messages.ts`
 - Modify: `discord-app/src/discord/ui/embeds.ts`
 - Modify: `discord-app/src/discord/message-handler.ts`
@@ -476,11 +551,11 @@ Expected: PASS
 - [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/src/app/streaming.ts discord-app/src/discord/ui/messages.ts discord-app/src/discord/ui/embeds.ts discord-app/src/discord/message-handler.ts discord-app/test/structured-streaming.test.ts
+git add discord-app/src/app/streaming.ts discord-app/src/app/runtime-event-pump.ts discord-app/src/discord/ui/messages.ts discord-app/src/discord/ui/embeds.ts discord-app/src/discord/message-handler.ts discord-app/test/structured-streaming.test.ts
 git commit -m "feat: render structured agent events into discord previews"
 ```
 
-### Task 12: 全量验证与文档回写
+### Task 13: 全量验证与文档回写
 
 **Files:**
 - Modify: `discord-app/README.md`
@@ -500,14 +575,19 @@ git commit -m "feat: render structured agent events into discord previews"
 Run: `cd discord-app && npm run typecheck`
 Expected: PASS
 
-- [ ] **Step 3: 跑完整测试**
+- [ ] **Step 3: 跑构建**
+
+Run: `cd discord-app && npm run build`
+Expected: PASS
+
+- [ ] **Step 4: 跑完整测试**
 
 Run: `cd discord-app && npm test`
 Expected: PASS
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
-git add discord-app/README.md docs/discord-only-agent-runtime-notes.md docs/discord-only-architecture-phase1.md docs/superpowers/plans/2026-03-25-discord-cli-runtime-implementation.md
-git commit -m "docs: record discord cli runtime implementation plan"
+git add discord-app/README.md docs/discord-only-agent-runtime-notes.md docs/discord-only-architecture-phase1.md
+git commit -m "docs: record discord cli runtime implementation notes"
 ```
