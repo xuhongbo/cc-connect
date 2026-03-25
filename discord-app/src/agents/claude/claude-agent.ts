@@ -9,7 +9,7 @@ export function createClaudeAdapter(deps: BinaryCheckDeps): AgentAdapter {
   return {
     kind: 'claude',
     runtimeKind: 'persistent',
-    async createSession() {
+    async createSession(_input) {
       const ok = await deps.hasBinary('claude');
       if (!ok) {
         throw new Error('claude CLI not available');

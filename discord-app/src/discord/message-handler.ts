@@ -1,6 +1,8 @@
 import { createLastTurnSnapshot } from '../domain/last-turn.js';
 import type { ConversationThread } from '../domain/thread.js';
 import type { AgentSessionBinding } from '../domain/session-binding.js';
+import type { Project } from '../domain/project.js';
+import type { AgentRuntimeProjectContext } from '../agents/types.js';
 import type { AgentsManager } from '../agents/manager.js';
 import type { SessionManager } from '../sessions/session-manager.js';
 import { stageAttachments } from '../utils/files.js';
@@ -27,6 +29,7 @@ interface InputImage {
 export interface HandleThreadMessageInput {
   threadId: string;
   text: string;
+  project: Project;
   workDir?: string;
   files?: InputFile[];
   images?: InputImage[];
@@ -57,12 +60,26 @@ export async function handleThreadMessage(input: HandleThreadMessageInput): Prom
       return { accepted: false, reason: `No adapter registered for ${binding.agentKind}.` };
     }
 
-    const runtime = input.sessions.getRuntime(thread.id) ?? await adapter.createSession();
+    const previousLastTurnSnapshot = input.sessions.getLastTurnSnapshot(thread.id);
+    const workDir = input.workDir ?? input.project.currentWorkDir ?? input.project.baseWorkDir ?? '';
+    const runtimeProjectContext: AgentRuntimeProjectContext = {
+      projectId: input.project.id,
+      defaultAgent: input.project.defaultAgent,
+      defaultModel: input.project.defaultModel,
+      defaultMode: input.project.defaultMode,
+    };
+
+    const runtime = input.sessions.getRuntime(thread.id) ?? await adapter.createSession({
+      workDir,
+      binding,
+      projectContext: runtimeProjectContext,
+      lastTurn: previousLastTurnSnapshot,
+    });
     input.sessions.setRuntime(thread.id, runtime);
 
-    const staged = input.workDir
+    const staged = workDir
       ? await stageAttachments({
-          workDir: input.workDir,
+          workDir,
           files: input.files ?? [],
           images: input.images ?? [],
         })

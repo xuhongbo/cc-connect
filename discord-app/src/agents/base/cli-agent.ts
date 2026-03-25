@@ -1,4 +1,9 @@
-import type { AgentSessionRuntime } from '../types.js';
+import type { AgentRuntimeEvent } from '../events.js';
+import type {
+  AgentSessionRuntime,
+  PendingPermissionState,
+  PermissionResponseInput,
+} from '../types.js';
 
 export class NoopSessionRuntime implements AgentSessionRuntime {
   async send(): Promise<void> {
@@ -25,7 +30,15 @@ export class NoopSessionRuntime implements AgentSessionRuntime {
     return '';
   }
 
-  events(): unknown[] {
-    return [];
+  async respondPermission(_input: PermissionResponseInput): Promise<void> {
+    return;
+  }
+
+  getPendingPermission(): PendingPermissionState | null {
+    return null;
+  }
+
+  async *events(): AsyncIterable<AgentRuntimeEvent> {
+    return;
   }
 }

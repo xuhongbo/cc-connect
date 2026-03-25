@@ -9,7 +9,7 @@ export function createGeminiAdapter(deps: BinaryCheckDeps): AgentAdapter {
   return {
     kind: 'gemini',
     runtimeKind: 'resume-per-turn',
-    async createSession() {
+    async createSession(_input) {
       const ok = await deps.hasBinary('gemini');
       if (!ok) {
         throw new Error('gemini CLI not available');
