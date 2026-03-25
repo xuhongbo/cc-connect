@@ -161,14 +161,35 @@ gemini
 2. 代理层或共享工具层负责落盘
 3. 不直接把二进制处理逻辑散落到命令层
 
-建议目录：
+当前实现目录：
 
 ```text
-<work_dir>/.discord-agent/files/
-<work_dir>/.discord-agent/images/
+<work_dir>/.cc-connect/attachments/
+<work_dir>/.cc-connect/images/
 ```
 
 临时文件可放在系统临时目录，但必须在回合结束后清理。
+
+## 当前一期已落地的运行层能力
+
+截至当前一期实现：
+
+- `Claude` 已具备真实长驻运行时核心：
+  - `stream-json` 输入输出
+  - `stdio` 权限回写
+  - 会话 `id` 续接
+- `Codex` 已具备真实每轮运行时核心：
+  - `exec`
+  - `exec resume`
+  - `reasoning_effort`
+  - 图片通过 `--image`
+- `Gemini` 已具备真实每轮运行时核心：
+  - `--output-format stream-json`
+  - `--resume <chat_id>`
+  - 每轮超时
+  - 图片/文件路径拼入提示
+
+当前仍未完成的主要是更完整的 Discord 端交互管理与展示层，而不是本地 CLI 运行层本身。
 
 ---
 
