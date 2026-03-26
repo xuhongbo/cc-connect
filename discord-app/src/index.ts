@@ -53,7 +53,9 @@ void (async () => {
               await replyOnce(interaction, '当前频道不支持创建线程');
               return;
             }
-            const requestedTitle = `${project.defaultAgent}-${Date.now()}`;
+            const selectedAgent = interaction.options?.getString?.('agent') || project.defaultAgent;
+            const titleSuffix = interaction.options?.getString?.('title') || `${selectedAgent}-${Date.now()}`;
+            const requestedTitle = titleSuffix;
             const thread = await interaction.channel.threads.create({
               name: requestedTitle,
               autoArchiveDuration: 1440,
@@ -61,7 +63,7 @@ void (async () => {
             });
             await app.orchestrator.createConversationThread({
               project,
-              agentKind: project.defaultAgent,
+              agentKind: selectedAgent,
               ownerUserId: interaction.user?.id ?? 'unknown',
               createdFrom: 'command',
               threadId: thread.id,

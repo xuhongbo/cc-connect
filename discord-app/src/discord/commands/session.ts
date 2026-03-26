@@ -7,7 +7,24 @@ export function buildSessionCommand() {
     .addSubcommand((subcommand: SlashCommandSubcommandBuilder) =>
       subcommand
         .setName('new')
-        .setDescription('Create a new agent thread'),
+        .setDescription('Create a new agent thread')
+        .addStringOption((option) =>
+          option
+            .setName('agent')
+            .setDescription('Choose which agent to bind to the new thread')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Claude', value: 'claude' },
+              { name: 'Codex', value: 'codex' },
+              { name: 'Gemini', value: 'gemini' },
+            ),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('title')
+            .setDescription('Optional thread title suffix')
+            .setRequired(false),
+        ),
     )
     .addSubcommand((subcommand: SlashCommandSubcommandBuilder) =>
       subcommand
