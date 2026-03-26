@@ -52,3 +52,6 @@ export function buildSessionCommand() {
         .setDescription('List known session threads for this project'),
     );
 }
+
+export { handleSessionCommand } from './handlers/session-handler.js';
+export type { SessionCommandHandlerContext } from './handlers/session-handler.js';

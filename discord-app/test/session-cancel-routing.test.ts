@@ -6,6 +6,7 @@ import type { AgentSessionRuntime } from '../src/agents/types.js';
 import { NoopSessionRuntime } from '../src/agents/base/cli-agent.js';
 import { createPermissionRequestEvent } from '../src/agents/events.js';
 import { createRuntimeEventPump } from '../src/app/runtime-event-pump.js';
+import { createPermissionActions } from '../src/discord/interactions/permission-actions.js';
 
 class PermissionRuntime extends NoopSessionRuntime implements AgentSessionRuntime {
   respondPermission = vi.fn(async () => {});
@@ -71,6 +72,51 @@ describe('session cancel routing', () => {
 
     await orchestrator.cancelThread('thread-2', 'user_cancelled');
     expect(runtime.cancel).toHaveBeenCalledWith('user_cancelled');
+  });
+
+  it('cancelThreadResult reports cancelled when runtime is available', async () => {
+    const runtime = new PermissionRuntime();
+    const sessions = createSessionManager();
+    sessions.setRuntime('thread-4', runtime);
+
+    const orchestrator = createOrchestrator({
+      threadsRepo: { async upsert() {} },
+      bindingsRepo: {
+        async upsert() {},
+        async getByThreadRecordId() { return null; },
+      },
+      runtimeStateRepo: {
+        async upsert() {},
+        async getByThreadRecordId() { return null; },
+      },
+      sessions,
+    });
+    const permissionActions = createPermissionActions(orchestrator);
+
+    const result = await permissionActions.cancelThreadResult('thread-4');
+
+    expect(result.status).toBe('cancelled');
+    expect(runtime.cancel).toHaveBeenCalledWith('user_cancelled');
+  });
+
+  it('cancelThreadResult reports missing runtime when none is bound', async () => {
+    const orchestrator = createOrchestrator({
+      threadsRepo: { async upsert() {} },
+      bindingsRepo: {
+        async upsert() {},
+        async getByThreadRecordId() { return null; },
+      },
+      runtimeStateRepo: {
+        async upsert() {},
+        async getByThreadRecordId() { return null; },
+      },
+      sessions: createSessionManager(),
+    });
+    const permissionActions = createPermissionActions(orchestrator);
+
+    const result = await permissionActions.cancelThreadResult('thread-unknown');
+
+    expect(result.status).toBe('missing_runtime');
   });
 
   it('runtime event pump can surface permission requests to hooks', async () => {

@@ -10,3 +10,6 @@ export function buildProjectCommand() {
         .setDescription('Show the current project channel status'),
     );
 }
+
+export { handleProjectCommand } from './handlers/project-handler.js';
+export type { ProjectCommandHandlerContext } from './handlers/project-handler.js';
