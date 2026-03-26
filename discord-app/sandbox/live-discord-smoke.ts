@@ -24,7 +24,8 @@ async function main() {
     }
 
     const guild = await client.guilds.fetch(config.discordGuildId);
-    console.log(`guild: ${guild.name} (${guild.id})`);
+    await guild.fetch();
+    console.log(`guild: ${guild.name || guild.id} (${guild.id})`);
 
     const channels = await guild.channels.fetch();
     const visibleChannels = channels
