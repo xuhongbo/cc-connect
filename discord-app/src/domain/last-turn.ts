@@ -5,6 +5,7 @@ export interface AttachmentRef {
   path: string;
   name: string;
   originalName?: string;
+  mimeType?: string;
 }
 
 export interface LastTurnSnapshot {

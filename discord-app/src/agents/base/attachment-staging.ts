@@ -24,7 +24,13 @@ export async function stageAttachmentsForRuntime(
   }));
   const attachmentRefs: AttachmentRef[] = [
     ...files.map((file) => ({ kind: 'file' as const, path: file.path, name: file.name, originalName: file.originalName })),
-    ...images.map((image) => ({ kind: 'image' as const, path: image.path, name: image.name, originalName: image.originalName })),
+    ...images.map((image) => ({
+      kind: 'image' as const,
+      path: image.path,
+      name: image.name,
+      originalName: image.originalName,
+      mimeType: image.mimeType,
+    })),
   ];
 
   return { files, images, attachmentRefs };

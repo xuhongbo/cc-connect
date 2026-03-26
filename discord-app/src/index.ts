@@ -376,6 +376,11 @@ function attachmentRefsToRuntimeInput(attachmentRefs: AttachmentRef[]) {
       .map((ref) => ({ name: ref.name, originalName: ref.originalName, path: ref.path })),
     images: attachmentRefs
       .filter((ref) => ref.kind === 'image')
-      .map((ref) => ({ name: ref.name, originalName: ref.originalName, path: ref.path, mimeType: 'image/png' })),
+      .map((ref) => ({
+        name: ref.name,
+        originalName: ref.originalName,
+        path: ref.path,
+        mimeType: ref.mimeType || 'image/png',
+      })),
   };
 }
