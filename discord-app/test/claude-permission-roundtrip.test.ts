@@ -6,6 +6,12 @@ import type { AgentSessionRuntime } from '../src/agents/types.js';
 import { NoopSessionRuntime } from '../src/agents/base/cli-agent.js';
 import { createPermissionRequestEvent } from '../src/agents/events.js';
 import { createRuntimeEventPump } from '../src/app/runtime-event-pump.js';
+import {
+  buildPermissionActionRow,
+  buildPermissionResolvedText,
+  createPermissionActions,
+  createPermissionActionId,
+} from '../src/discord/interactions/permission-actions.js';
 
 class PermissionRuntime extends NoopSessionRuntime implements AgentSessionRuntime {
   respondPermission = vi.fn(async () => {});
@@ -47,6 +53,21 @@ describe('claude permission roundtrip', () => {
       requestId: 'req-1',
       decision: 'approved',
     });
+  });
+
+  it('builds disabled action rows and resolved text for handled permissions', async () => {
+    const row = buildPermissionActionRow('thread-1', 'req-1', { disabled: true });
+    const buttons = row.components;
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0].data.disabled).toBe(true);
+    expect(buttons[1].data.disabled).toBe(true);
+    expect(buildPermissionResolvedText('Bash', 'approved')).toBe('权限已批准：Bash');
+    expect(buildPermissionResolvedText('Bash', 'denied')).toBe('权限已拒绝：Bash');
+    expect(createPermissionActionId({
+      threadRecordId: 'thread-1',
+      requestId: 'req-1',
+      decision: 'approved',
+    })).toContain('perm:approve:thread-1:req-1');
   });
 });
 

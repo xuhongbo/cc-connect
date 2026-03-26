@@ -1,3 +1,4 @@
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import type { Orchestrator } from '../../app/orchestrator.js';
 import type { PermissionResponseDecision } from '../../agents/types.js';
 
@@ -28,18 +29,51 @@ export function parsePermissionActionId(customId: string): PermissionAction | nu
   return null;
 }
 
+export function buildPermissionActionRow(
+  threadRecordId: string,
+  requestId: string,
+  options: { disabled?: boolean } = {},
+) {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(createPermissionActionId({
+        threadRecordId,
+        requestId,
+        decision: 'approved',
+      }))
+      .setLabel('允许')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(Boolean(options.disabled)),
+    new ButtonBuilder()
+      .setCustomId(createPermissionActionId({
+        threadRecordId,
+        requestId,
+        decision: 'denied',
+      }))
+      .setLabel('拒绝')
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(Boolean(options.disabled)),
+  );
+}
+
+export function buildPermissionResolvedText(toolName: string, decision: PermissionResponseDecision): string {
+  return decision === 'approved'
+    ? `权限已批准：${toolName}`
+    : `权限已拒绝：${toolName}`;
+}
+
 export function createPermissionActions(orchestrator: Pick<Orchestrator, 'respondPermission' | 'cancelThread'>) {
   return {
-    async handlePermission(customId: string): Promise<boolean> {
+    async handlePermission(customId: string): Promise<PermissionAction | null> {
       const action = parsePermissionActionId(customId);
       if (!action) {
-        return false;
+        return null;
       }
       await orchestrator.respondPermission(action.threadRecordId, {
         requestId: action.requestId,
         decision: action.decision,
       });
-      return true;
+      return action;
     },
     async cancelThread(threadRecordId: string): Promise<void> {
       await orchestrator.cancelThread(threadRecordId, 'user_cancelled');

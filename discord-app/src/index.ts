@@ -1,13 +1,12 @@
 import 'dotenv/config';
-import {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-} from 'discord.js';
 import { bootstrap } from './app/bootstrap.js';
 import { registerCommands } from './discord/commands/register.js';
 import { bindDiscordInteractionHandlers } from './discord/client.js';
-import { createPermissionActionId, createPermissionActions } from './discord/interactions/permission-actions.js';
+import {
+  buildPermissionActionRow,
+  buildPermissionResolvedText,
+  createPermissionActions,
+} from './discord/interactions/permission-actions.js';
 import { handleThreadMessage } from './discord/message-handler.js';
 import { buildRuntimeErrorText } from './discord/ui/embeds.js';
 import { createStreamingPreview } from './app/streaming.js';
@@ -22,9 +21,20 @@ void (async () => {
   bindDiscordInteractionHandlers(app.discord, {
     onInteractionCreate: async (interaction: any) => {
       if (interaction?.isButton?.()) {
-        const handled = await permissionActions.handlePermission(interaction.customId);
-        if (handled && interaction.reply) {
-          await interaction.reply({ content: '已处理权限响应', ephemeral: true });
+        const action = await permissionActions.handlePermission(interaction.customId);
+        if (action) {
+          const currentContent = String(interaction.message?.content ?? '');
+          const toolName = currentContent.replace(/^等待权限确认：/, '') || '工具调用';
+          if (interaction.update) {
+            await interaction.update({
+              content: buildPermissionResolvedText(toolName, action.decision),
+              components: [
+                buildPermissionActionRow(action.threadRecordId, action.requestId, { disabled: true }),
+              ],
+            });
+          } else if (interaction.reply) {
+            await interaction.reply({ content: '已处理权限响应', ephemeral: true });
+          }
         }
         return;
       }
@@ -275,24 +285,7 @@ void (async () => {
             await message.channel?.send?.({
               content: buildPermissionStatusMessage(event.toolName),
               components: [
-                new ActionRowBuilder<ButtonBuilder>().addComponents(
-                  new ButtonBuilder()
-                    .setCustomId(createPermissionActionId({
-                      threadRecordId,
-                      requestId: event.requestId,
-                      decision: 'approved',
-                    }))
-                    .setLabel('允许')
-                    .setStyle(ButtonStyle.Success),
-                  new ButtonBuilder()
-                    .setCustomId(createPermissionActionId({
-                      threadRecordId,
-                      requestId: event.requestId,
-                      decision: 'denied',
-                    }))
-                    .setLabel('拒绝')
-                    .setStyle(ButtonStyle.Danger),
-                ),
+                buildPermissionActionRow(threadRecordId, event.requestId),
               ],
             });
           }
