@@ -1,0 +1,143 @@
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+
+export function sanitizeSessionName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50);
+}
+
+export function formatUptime(startTime: number): string {
+  const ms = Date.now() - startTime;
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d ${hours % 24}h`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${seconds}s`;
+}
+
+export function formatLastActivity(timestamp: number): string {
+  const ms = Date.now() - timestamp;
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d ago`;
+  if (hours > 0) return `${hours}h ago`;
+  if (minutes > 0) return `${minutes}m ago`;
+  return 'just now';
+}
+
+export function isPathAllowed(targetPath: string, allowedPaths: string[]): boolean {
+  if (allowedPaths.length === 0) return true;
+  const resolved = resolve(targetPath);
+  return allowedPaths.some(allowed => {
+    const resolvedAllowed = resolve(allowed.startsWith('~') ? allowed.replace('~', homedir()) : allowed);
+    return resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + '/');
+  });
+}
+
+export function resolvePath(dir: string): string {
+  const expanded = dir.startsWith('~') ? dir.replace('~', homedir()) : dir;
+  return resolve(expanded);
+}
+
+export function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 3) + '...';
+}
+
+export function splitMessage(text: string, maxLen: number = 1900): string[] {
+  if (text.length <= maxLen) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+
+    let splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt === -1 || splitAt < maxLen / 2) {
+      splitAt = maxLen;
+    }
+
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, '');
+  }
+
+  return chunks;
+}
+
+export function isUserAllowed(userId: string, allowedUsers: string[], allowAll: boolean): boolean {
+  if (allowAll) return true;
+  return allowedUsers.includes(userId);
+}
+
+export function projectNameFromDir(directory: string): string {
+  const resolved = resolvePath(directory);
+  const basename = resolved.split('/').pop() || 'unknown';
+  return sanitizeSessionName(basename);
+}
+
+export function detectNumberedOptions(text: string): string[] | null {
+  const lines = text.trim().split('\n');
+  const options: string[] = [];
+  const optionRegex = /^\s*(\d+)[.)]\s+(.+)$/;
+  let firstOptionLine = -1;
+  let lastOptionLine = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(optionRegex);
+    if (match) {
+      if (firstOptionLine === -1) firstOptionLine = i;
+      lastOptionLine = i;
+      options.push(match[2].trim());
+    }
+  }
+
+  if (options.length < 2 || options.length > 6) return null;
+
+  // Options should be short choice labels, not long descriptions
+  if (options.some(o => o.length > 80)) return null;
+
+  // The numbered list should be near the end of the text (not buried in the middle)
+  const linesAfter = lines.slice(lastOptionLine + 1).filter(l => l.trim()).length;
+  if (linesAfter > 3) return null;
+
+  // Only treat as interactive options if the text before the list
+  // contains a question or prompt asking the user to choose
+  const preamble = lines.slice(0, firstOptionLine).join(' ').toLowerCase();
+  const hasQuestion = /\?\s*$/.test(preamble.trim()) ||
+    /\b(which|choose|select|pick|prefer|would you like|how would you|what approach|option)\b/.test(preamble);
+
+  return hasQuestion ? options : null;
+}
+
+const ABORT_PATTERNS = ['abort', 'cancel', 'interrupt', 'killed', 'signal'];
+
+export function isAbortError(err: unknown): boolean {
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  const msg = ((err as Error).message || '').toLowerCase();
+  return ABORT_PATTERNS.some(p => msg.includes(p));
+}
+
+export function isAbortErrorMessage(messages: string[]): boolean {
+  return messages.some(m => ABORT_PATTERNS.some(p => m.toLowerCase().includes(p)));
+}
+
+export function detectYesNoPrompt(text: string): boolean {
+  const lower = text.toLowerCase();
+  return /\b(y\/n|yes\/no|confirm|proceed)\b/.test(lower) ||
+    /\?\s*$/.test(text.trim()) && /\b(should|would you|do you want|shall)\b/.test(lower);
+}

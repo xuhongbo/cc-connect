@@ -4,6 +4,99 @@
 
 CC-Connect is a bridge that connects AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, etc.) with messaging platforms (Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeChat Work, QQ, LINE). Users interact with their coding agent through their preferred messaging app.
 
+## Discord-Only Reboot Branch Vision
+
+> This section defines the target state for the planned Discord-only reboot branch. It is intentionally product-specific and does **not** preserve the multi-platform abstraction as a long-term goal for that branch.
+
+### Branch Positioning
+
+- The reboot branch is a **Discord-only** product.
+- Do **not** add new messaging platforms in that branch.
+- Do **not** preserve multi-platform abstractions just for future optionality.
+- Discord is the product model itself, not an interchangeable platform plugin.
+
+### Fixed Product Model
+
+- **Guild / Server** = workspace
+- **Channel** = project
+- **Thread** = conversation
+- **Exactly one agent per thread**
+- Multiple agents may coexist inside the same project channel, but each thread is permanently bound to one agent unless explicitly restarted/rebound.
+
+### Agent Runtime Principles
+
+- Keep the current runtime strategy of **driving local CLIs directly**.
+- Do **not** replace agent CLIs with a unified cloud API gateway.
+- Preserve per-agent runtime differences:
+  - **Claude Code**: persistent long-lived process, bidirectional stdio
+  - **Codex**: per-turn subprocess, resumes with thread/session id
+  - **Gemini CLI**: per-turn subprocess, resumes with chat/session id
+- The reboot branch should model these differences explicitly instead of forcing one fake-unified runtime model.
+
+### Phase 1 Scope
+
+Phase 1 should only build the core working loop:
+
+- Discord-only interaction model
+- Project channel → single-agent thread workflow
+- Claude / Codex / Gemini support
+- Text, image, and file input
+- Streamed reply rendering
+- Session persistence and restart recovery
+- Basic project / session / agent commands
+- Agent identity presentation through title prefix, tags, and color
+
+### Explicitly Out of Scope for Phase 1
+
+Do **not** pull these into the first implementation phase:
+
+- voice input / TTS
+- cron / scheduled jobs
+- heartbeat / autonomous polling
+- bot-to-bot relay
+- web dashboard / management API
+- multi-platform compatibility
+- complex role / ACL systems
+
+### Architecture Constraints for the Reboot Branch
+
+- Discord-facing code must live in a dedicated Discord application layer.
+- Agent runtimes must not depend on Discord-specific types.
+- Thread records and agent session bindings must be stored separately.
+- Persistence is a core requirement, not a nice-to-have.
+- Service startup should restore logical bindings, but should **not** eagerly restart every agent process.
+- Prefer a **modular monolith** for Phase 1; do not start with microservices.
+
+### Roadmap Summary
+
+- **Phase 1**: core Discord project/thread/agent loop
+- **Phase 2**: project management panels, thread discoverability, better project controls
+- **Phase 3**: automation, scheduled work, recovery tooling
+- **Phase 4**: dashboards, management surfaces, broader operational tooling
+
+### Required Reference Docs for the Reboot Branch
+
+- `docs/discord-only-vision.md`
+- `docs/discord-only-architecture-phase1.md`
+- `docs/discord-only-roadmap.md`
+- `docs/discord-only-agent-runtime-notes.md`
+- `docs/discord-only-agentcord-comparison.md`
+
+### Embedded Reference Code
+
+- `references/agentcord/` is a vendored reference copy of the upstream `agentcord` repository.
+- It exists for study and selective borrowing only.
+- Do **not** let its channel-per-session model overwrite the reboot branch's target model.
+- Safe areas to learn from:
+  - Discord.js app structure
+  - stream editing / message update patterns
+  - session persistence ideas
+  - provider event translation patterns
+- Areas that are explicitly **not** the target architecture:
+  - category = project, channel = session
+  - tmux as a core session primitive
+  - replacing all local CLI runtimes with SDKs in Phase 1
+
 ## Architecture
 
 ```
